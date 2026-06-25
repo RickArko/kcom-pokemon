@@ -1,0 +1,12 @@
+{
+  "random": {
+    "win_rate": 0.2,
+    "wins": 8,
+    "matches": 40
+  },
+  "exp001_baseline": {
+    "win_rate": 0.4,
+    "wins": 16,
+    "matches": 40
+  }
+}

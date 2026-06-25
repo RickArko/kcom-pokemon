@@ -5,12 +5,32 @@ import logging
 import time
 from pathlib import Path
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 
-def run_match(agent0, agent1, env, max_turns: int = 100) -> dict:
+def _flatten_obs(obs: dict | None) -> dict:
+    """Convert raw cg observation dict to the format expected by project agents.
+
+    The cg engine returns a nested dict (``select.option``, ``current.yourIndex``,
+    etc.).  Project agents expect a flatter shape (``options``, ``minCount``,
+    ``current_player``, ``done``, etc.).  This helper bridges the two formats so
+    existing agents (RandomAgent, RuleBasedAgent) work without modification.
+    """
+    if obs is None or obs.get("select") is None:
+        return {"select": None}
+    flat = dict(obs)
+    select = flat["select"]
+    flat["options"] = list(range(len(select["option"])))
+    flat["minCount"] = select["minCount"]
+    flat["maxCount"] = select["maxCount"]
+    current = flat.get("current", {})
+    flat["current_player"] = current.get("yourIndex", 0)
+    flat["done"] = current.get("result", -1) != -1
+    flat["scores"] = [0, 0]  # compatibility placeholder
+    return flat
+
+
+def run_match(agent0, agent1, max_turns: int = 100) -> dict:
     """Run a single match between two agents and return the result.
 
     Requires the ``cg`` game engine to be installed in ``data/sim_sample/cg/``.
@@ -20,8 +40,6 @@ def run_match(agent0, agent1, env, max_turns: int = 100) -> dict:
     ----------
     agent0, agent1:
         Callable agents accepting ``agent(obs_dict) -> list[int]``.
-    env:
-        Game engine environment (e.g. ``cg.game.Game()``).
     max_turns:
         Abort if the match exceeds this many turns.
 
@@ -29,18 +47,53 @@ def run_match(agent0, agent1, env, max_turns: int = 100) -> dict:
     -------
     dict with keys: winner (0 or 1), turns, score0, score1, error.
     """
-    obs = env.reset()
-    turn = 0
+    try:
+        import cg.game as _cg_game
+    except ImportError:
+        raise RuntimeError(
+            "Game engine not found. Download the simulation SDK:\n  make sim-download"
+        )
+
+    # First call: agents return their 60-card decks
+    deck_obs = {"select": None}
+    try:
+        deck0 = agent0(deck_obs)
+        deck1 = agent1(deck_obs)
+    except Exception as e:
+        logger.warning("Deck selection error: %s", e)
+        return {
+            "winner": -1,
+            "turns": 0,
+            "score0": 0,
+            "score1": 0,
+            "error": str(e),
+        }
 
     try:
-        while not obs.get("done", False) and turn < max_turns:
-            current_player = obs.get("current_player", 0)
+        obs, _ = _cg_game.battle_start(deck0, deck1)
+    except Exception as e:
+        logger.warning("Battle start error: %s", e)
+        return {
+            "winner": -1,
+            "turns": 0,
+            "score0": 0,
+            "score1": 0,
+            "error": str(e),
+        }
+
+    flat_obs = _flatten_obs(obs)
+    turn = 0
+    try:
+        while not flat_obs.get("done", False) and turn < max_turns:
+            current_player = flat_obs["current_player"]
             agent = agent0 if current_player == 0 else agent1
-            actions = agent(obs)
-            obs = env.step(actions)
+            actions = agent(flat_obs)
+            obs = _cg_game.battle_select(actions)
+            flat_obs = _flatten_obs(obs)
             turn += 1
     except Exception as e:
         logger.warning("Match error at turn %d: %s", turn, e)
+        _cg_game.battle_finish()
         return {
             "winner": -1,
             "turns": turn,
@@ -49,13 +102,21 @@ def run_match(agent0, agent1, env, max_turns: int = 100) -> dict:
             "error": str(e),
         }
 
-    scores = obs.get("scores", [0, 0])
-    winner = np.argmax(scores) if scores[0] != scores[1] else -1
+    _cg_game.battle_finish()
+
+    result = obs.get("current", {}).get("result", -1) if obs else -1
+    if result == 0:
+        winner = 0
+    elif result == 1:
+        winner = 1
+    else:
+        winner = -1
+
     return {
-        "winner": int(winner),
+        "winner": winner,
         "turns": turn,
-        "score0": int(scores[0]),
-        "score1": int(scores[1]),
+        "score0": 1 if winner == 0 else 0,
+        "score1": 1 if winner == 1 else 0,
         "error": None,
     }
 
@@ -63,7 +124,6 @@ def run_match(agent0, agent1, env, max_turns: int = 100) -> dict:
 def run_gauntlet(
     agents: list,
     n_matches: int = 20,
-    env_factory=None,
     results_dir: str = "workspace/results",
     max_turns: int = 100,
 ) -> dict:
@@ -78,9 +138,6 @@ def run_gauntlet(
         List of ``(name, agent_callable)`` tuples.
     n_matches:
         Number of matches per pairing (will be doubled for both sides).
-    env_factory:
-        Callable that returns a fresh game environment.  If None, expects the
-        ``cg`` package to be importable and uses ``cg.game.Game``.
     results_dir:
         Directory to save per-agent result JSON files.
 
@@ -88,15 +145,12 @@ def run_gauntlet(
     -------
     dict mapping agent name to win-rate stats.
     """
-    if env_factory is None:
-        try:
-            from cg.game import Game as _Game
-
-            env_factory = _Game
-        except ImportError:
-            raise RuntimeError(
-                "Game engine not found. Download the simulation SDK:\n  make sim-download"
-            )
+    try:
+        import cg.game  # noqa: F401
+    except ImportError:
+        raise RuntimeError(
+            "Game engine not found. Download the simulation SDK:\n  make sim-download"
+        )
 
     results_path = Path(results_dir)
     results_path.mkdir(parents=True, exist_ok=True)
@@ -115,8 +169,7 @@ def run_gauntlet(
 
             wins_a = 0
             for m in range(n_matches):
-                env = env_factory()
-                result = run_match(agent_a, agent_b, env, max_turns=max_turns)
+                result = run_match(agent_a, agent_b, max_turns=max_turns)
                 if result["winner"] == 0:
                     wins_a += 1
                     win_counts[name_a] += 1

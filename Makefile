@@ -8,7 +8,7 @@ RAW_DIR        := data/raw
 SUBMISSION_FILE ?= submit/submission.tar.gz
 SUBMISSION_MSG  ?= "agent: rule-based baseline"
 
-.PHONY: all install download sim-download train submit test lint format clean
+.PHONY: all install download sim-download train submit test lint format clean list results
 
 all: install download
 	@echo ""
@@ -53,14 +53,24 @@ sim-download:
 		echo "================================================================"; \
 		exit $$exit_code; \
 	}; \
-	cd $(SIM_DATA_DIR) && unzip -o *.zip && rm -f *.zip; \
+	(cd $(SIM_DATA_DIR) && unzip -o *.zip && rm -f *.zip; \
 	if [ -d sample_submission/cg ]; then \
-		cp -r sample_submission/cg cg; \
-	fi; \
+		rm -rf cg && cp -r sample_submission/cg cg; \
+	fi); \
 	echo "  Simulation SDK ready in $(SIM_DATA_DIR)/"
 
 gauntlet:
 	@PYTHONPATH=$(SIM_DATA_DIR):$$PYTHONPATH uv run python scripts/gauntlet.py $(ARGS)
+
+list:
+	@PYTHONPATH=$(SIM_DATA_DIR):$$PYTHONPATH uv run python scripts/gauntlet.py --list
+
+results:
+	@if [ -f workspace/results/gauntlet_results.json ]; then \
+		uv run python -c "import json; d=json.load(open('workspace/results/gauntlet_results.json')); [print(f'{k:<25} {v[\"win_rate\"]:<8.3f}  ({v[\"wins\"]}/{v[\"matches\"]})') for k,v in sorted(d.items(), key=lambda x: x[1][\"win_rate\"], reverse=True)]"; \
+	else \
+		echo "No results yet — run 'make gauntlet' first"; \
+	fi
 
 build-submit:
 	@uv run python scripts/build_submission.py $(ARGS)

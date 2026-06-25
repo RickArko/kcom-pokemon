@@ -51,7 +51,8 @@ class RandomAgent(Agent):
         if not choices:
             return []
         count = self.rng.integers(min_count, max_count + 1)
-        return sorted(self.rng.choice(choices, size=min(count, len(choices)), replace=False))
+        selected = self.rng.choice(choices, size=min(count, len(choices)), replace=False)
+        return [int(x) for x in sorted(selected)]
 
 
 class RuleBasedAgent(Agent):

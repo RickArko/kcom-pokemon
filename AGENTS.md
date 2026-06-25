@@ -7,7 +7,7 @@ Kaggle Simulation + Strategy competitions. Build a Pokemon TCG AI agent.
 All Python **must** be prefixed with `uv run` (`.venv` not on PATH).
 
 | Command | What it does |
-|---|---|
+|---|---|---|
 | `make install` | `uv sync --extra dev` + editable install + auth check |
 | `make download` | Fetch card CSVs to `data/raw/` |
 | `make sim-download` | Fetch `cg` game engine to `data/sim_sample/` (join competition first) |
@@ -16,7 +16,10 @@ All Python **must** be prefixed with `uv run` (`.venv` not on PATH).
 | `make lint` | `ruff check src/ scripts/ tests/` (no autofix) |
 | `make format` | `ruff format --check` (no rewrite) |
 | `make format-fix` | Apply ruff formatting |
-| `make gauntlet` | Run agent tournament (requires SDK) |
+| `make list` | List experiments in `workspace/` |
+| `make gauntlet` | Run tournament (auto-discovers `workspace/exp*/`) |
+| `make gauntlet ARGS="exp001 exp002"` | Run specific experiments |
+| `make results` | Show last gauntlet results table |
 | `make build-submit ARGS="--agent ... --deck ..."` | Package `.tar.gz` |
 | `make submit` | Upload to Kaggle + show leaderboard |
 
@@ -46,7 +49,7 @@ class MyAgent(RuleBasedAgent):
         return [obs["options"][0]]
 ```
 
-Subclass `RuleBasedAgent` or `Agent` directly. Agents must be registered in `scripts/gauntlet.py` to participate in tournaments.
+Subclass `RuleBasedAgent` or `Agent` directly. Agents are auto-discovered from `workspace/exp*/` — no manual registration needed.
 
 ## Key gotchas
 

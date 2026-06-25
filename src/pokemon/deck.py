@@ -20,6 +20,17 @@ class Deck:
 
     @classmethod
     def from_csv(cls, path: str) -> Deck:
+        with open(path, "r") as f:
+            lines = [line.strip() for line in f if line.strip()]
+        if not lines:
+            raise ValueError(f"Empty deck file: {path}")
+        if lines[0] == "Card ID":
+            df = pd.read_csv(path)
+            return cls(cards=df["Card ID"].tolist())
+        # Header-less raw list (Kaggle submission format)
+        if lines[0].isdigit():
+            return cls(cards=[int(x) for x in lines])
+        # Treat first line as header and validate column name
         df = pd.read_csv(path)
         return cls(cards=df["Card ID"].tolist())
 
