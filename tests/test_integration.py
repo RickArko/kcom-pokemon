@@ -1,225 +1,88 @@
-"""End-to-end integration test with structured synthetic battle data."""
+"""Integration tests for the agent-building pipeline."""
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-import pytest
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import StratifiedKFold
 
-from pokemon.features import StrategyFeatureEngineer
-from pokemon.models import StackingEnsemble, save_submission
-
-
-@pytest.fixture
-def synthetic_battle_data():
-    """Generate separable synthetic Pokemon TCG battle-state data.
-
-    The winner is made partially separable by HP advantage and prize progress
-    so the pipeline has signal to learn from.
-    """
-    n_train, n_test = 300, 100
-    rng = np.random.default_rng(42)
-
-    deck_names = ["Charizard", "Mewtwo", "Pikachu", "Gardevoir", "Lugia"]
-    pokemon_names = ["Charizard", "Mewtwo", "Pikachu", "Gardevoir", "Lugia", "Blastoise"]
-
-    def _make_df(n: int, has_target: bool = False) -> pd.DataFrame:
-        df = pd.DataFrame(
-            {
-                "id": range(n),
-                "first_player": rng.integers(0, 2, n),
-                "turns": rng.integers(1, 20, n),
-                "prizes_left": rng.integers(0, 6, n),
-                "deck_name": rng.choice(deck_names, n),
-                "opponent_deck_name": rng.choice(deck_names, n),
-                "player_active_pokemon_name": rng.choice(pokemon_names, n),
-                "opponent_active_pokemon_name": rng.choice(pokemon_names, n),
-                "player_active_pokemon_hp": rng.integers(10, 200, n),
-                "opponent_active_pokemon_hp": rng.integers(10, 200, n),
-                "player_bench_count": rng.integers(0, 5, n),
-                "opponent_bench_count": rng.integers(0, 5, n),
-                "player_hand_count": rng.integers(0, 10, n),
-                "opponent_hand_count": rng.integers(0, 10, n),
-                "player_deck_count": rng.integers(0, 60, n),
-                "opponent_deck_count": rng.integers(0, 60, n),
-                "player_prize_count": rng.integers(0, 6, n),
-                "opponent_prize_count": rng.integers(0, 6, n),
-            }
-        )
-        if has_target:
-            # Winner partially determined by HP advantage and prizes taken
-            hp_adv = df["player_active_pokemon_hp"] > df["opponent_active_pokemon_hp"]
-            prize_adv = df["player_prize_count"] >= df["opponent_prize_count"]
-            df["winner"] = ((hp_adv | prize_adv) & rng.random(n) > 0.3).astype(int)
-        return df
-
-    train = _make_df(n_train, has_target=True)
-    test = _make_df(n_test, has_target=False)
-    return train, test
+from pokemon.agent import RandomAgent, RuleBasedAgent
+from pokemon.data import load_card_data
+from pokemon.deck import Deck, build_deck
+from pokemon.tracking import track_experiment
 
 
 class TestPipeline:
-    def test_feature_engineering_drops_and_diffs(self, synthetic_battle_data):
-        train, test = synthetic_battle_data
-        engineer = StrategyFeatureEngineer(
-            diff_pairs=[
-                ("player_active_pokemon_hp", "opponent_active_pokemon_hp"),
-                ("player_bench_count", "opponent_bench_count"),
-            ],
-            cat_cols=[],
+    def test_card_data_loading(self, tmp_path):
+        csv_path = tmp_path / "EN_Card_Data.csv"
+        pd.DataFrame(
+            {
+                "Card ID": range(1, 11),
+                "Card Name": [f"Card_{i}" for i in range(1, 11)],
+            }
+        ).to_csv(csv_path, index=False)
+
+        result = load_card_data(data_dir=str(tmp_path))
+        assert len(result["en"]) == 10
+
+    def test_deck_60_card_roundtrip(self):
+        cards = list(range(1, 61))
+        deck = build_deck(cards)
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            tmp = f.name
+        try:
+            deck.to_csv(tmp)
+            loaded = Deck.from_csv(tmp)
+            assert loaded.cards == deck.cards
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+
+    def test_agent_baseline_interface(self):
+        deck_cards = list(range(1, 61))
+        agent = RuleBasedAgent(deck=deck_cards, random_seed=42)
+
+        deck_result = agent({"select": None, "current_player": 0})
+        assert len(deck_result) == 60
+
+        act_result = agent(
+            {
+                "select": "options",
+                "options": [10, 20, 30],
+                "minCount": 1,
+                "maxCount": 1,
+            }
         )
-        X_train = engineer.fit_transform(train.drop(columns=["winner"]))
-        X_test = engineer.transform(test)
+        assert len(act_result) == 1
+        assert act_result[0] in [10, 20, 30]
 
-        # Diff features are created
-        assert "player_active_pokemon_hp_opponent_active_pokemon_hp" in X_train.columns
-        assert "player_bench_count_opponent_bench_count" in X_train.columns
-        # ID column is dropped
-        assert "id" not in X_train.columns
-        assert "id" not in X_test.columns
-        # Shape and column consistency
-        assert len(X_train) == len(train)
-        assert len(X_test) == len(test)
-        assert X_train.columns.tolist() == X_test.columns.tolist()
+    def test_random_agent_reproducibility(self):
+        a1 = RandomAgent(random_seed=42)
+        a2 = RandomAgent(random_seed=42)
+        obs = {"select": "options", "options": list(range(100)), "minCount": 1, "maxCount": 1}
 
-    def test_feature_engineering_with_ohe_categoricals(self, synthetic_battle_data):
-        train, test = synthetic_battle_data
-        engineer = StrategyFeatureEngineer(
-            diff_pairs=[],
-            cat_cols=["deck_name"],
-            encoding="ohe",
-        )
-        X_train = engineer.fit_transform(train.drop(columns=["winner"]))
-        X_test = engineer.transform(test)
+        np.testing.assert_array_equal(a1(obs), a2(obs))
 
-        assert "deck_name" not in X_train.columns
-        # At least one OHE column created
-        ohe_cols = [c for c in X_train.columns if c.startswith("deck_name_")]
-        assert len(ohe_cols) > 0
-        assert X_train.columns.tolist() == X_test.columns.tolist()
+    def test_tracking_experiment(self, tmp_path):
+        runs_dir = tmp_path / "runs"
+        config = {"agent": {"type": "random"}, "seed": 42}
 
-    def test_interaction_features(self, synthetic_battle_data):
-        train, test = synthetic_battle_data
-        _str_cols = [
-            "deck_name",
-            "opponent_deck_name",
-            "player_active_pokemon_name",
-            "opponent_active_pokemon_name",
-        ]
-        engineer = StrategyFeatureEngineer(
-            drop_cols=["id", "match_id", "game_id", "timestamp", "round", "event"] + _str_cols,
-            diff_pairs=[
-                ("player_active_pokemon_hp", "opponent_active_pokemon_hp"),
-            ],
-            cat_cols=[],
-            interaction_pairs=[
-                ("turns", "player_active_pokemon_hp_opponent_active_pokemon_hp"),
-            ],
-        )
-        X_train = engineer.fit_transform(train.drop(columns=["winner"]))
-        X_test = engineer.transform(test)
+        with track_experiment(config, run_name="test_run", base_dir=str(runs_dir)) as run:
+            run.log_metrics({"score": 0.5})
+            run.log_params({"n_games": 100})
 
-        assert "turns_x_player_active_pokemon_hp_opponent_active_pokemon_hp" in X_train.columns
-        assert X_train.columns.tolist() == X_test.columns.tolist()
+        run_dirs = list(runs_dir.iterdir())
+        assert len(run_dirs) == 1
+        assert "test_run" in str(run_dirs[0])
 
-    def test_ensemble_learns_from_data(self, synthetic_battle_data):
-        train, test = synthetic_battle_data
-        _str_cols = [
-            "deck_name",
-            "opponent_deck_name",
-            "player_active_pokemon_name",
-            "opponent_active_pokemon_name",
-        ]
-        engineer = StrategyFeatureEngineer(
-            drop_cols=["id", "match_id", "game_id", "timestamp", "round", "event"] + _str_cols,
-            diff_pairs=[
-                ("player_active_pokemon_hp", "opponent_active_pokemon_hp"),
-                ("player_bench_count", "opponent_bench_count"),
-            ],
-            cat_cols=[],
-        )
-        y_train = train["winner"]
-        X_train = engineer.fit_transform(train.drop(columns=["winner"]))
-        X_test = engineer.transform(test)
+        metrics_path = run_dirs[0] / "metrics.json"
+        assert metrics_path.exists()
+        import json
 
-        base_models = [
-            ("lr1", LogisticRegression(max_iter=1000, random_state=42)),
-            ("lr2", LogisticRegression(max_iter=1000, random_state=42, C=0.5)),
-        ]
-        ensemble = StackingEnsemble(base_models)
-        cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
-        ensemble.fit(X_train, y_train, cv, X_test)
+        with open(metrics_path) as f:
+            data = json.load(f)
+        assert data["metrics"]["score"] == 0.5
 
-        assert len(ensemble.valid_scores_) == 3
-        assert ensemble.overall_oof_score_ is not None
-        assert len(ensemble.fold_models_) == 3
-
-        preds = ensemble.predict(X_test)
-        assert len(preds) == len(test)
-        assert set(preds) <= {0, 1}
-
-    def test_full_pipeline_with_submission(self, synthetic_battle_data, tmp_path):
-        train, test = synthetic_battle_data
-        _str_cols = [
-            "deck_name",
-            "opponent_deck_name",
-            "player_active_pokemon_name",
-            "opponent_active_pokemon_name",
-        ]
-        engineer = StrategyFeatureEngineer(
-            drop_cols=["id", "match_id", "game_id", "timestamp", "round", "event"] + _str_cols,
-            diff_pairs=[("player_active_pokemon_hp", "opponent_active_pokemon_hp")],
-            cat_cols=[],
-        )
-        y_train = train["winner"]
-        X_train = engineer.fit_transform(train.drop(columns=["winner"]))
-        X_test = engineer.transform(test)
-
-        base_models = [
-            ("lr", LogisticRegression(max_iter=1000, random_state=42)),
-        ]
-        ensemble = StackingEnsemble(base_models)
-        cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
-        ensemble.fit(X_train, y_train, cv, X_test)
-
-        preds = ensemble.predict(X_test)
-        out = tmp_path / "sub.csv"
-        save_submission(test["id"], preds, output_path=str(out))
-        df = pd.read_csv(out)
-        assert list(df.columns) == ["id", "winner"]
-        assert len(df) == len(test)
-        assert all(c in {0, 1} for c in df["winner"])
-
-    def test_save_load_and_predict_consistent(self, synthetic_battle_data, tmp_path):
-        train, test = synthetic_battle_data
-        _str_cols = [
-            "deck_name",
-            "opponent_deck_name",
-            "player_active_pokemon_name",
-            "opponent_active_pokemon_name",
-        ]
-        engineer = StrategyFeatureEngineer(
-            drop_cols=["id", "match_id", "game_id", "timestamp", "round", "event"] + _str_cols,
-            diff_pairs=[("player_active_pokemon_hp", "opponent_active_pokemon_hp")],
-            cat_cols=[],
-        )
-        y_train = train["winner"]
-        X_train = engineer.fit_transform(train.drop(columns=["winner"]))
-        X_test = engineer.transform(test)
-
-        base_models = [
-            ("lr", LogisticRegression(max_iter=1000, random_state=42)),
-        ]
-        ensemble = StackingEnsemble(base_models)
-        cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
-        ensemble.fit(X_train, y_train, cv, X_test)
-
-        model_path = tmp_path / "ensemble.joblib"
-        ensemble.save(model_path)
-
-        loaded = StackingEnsemble.load(model_path)
-        preds_orig = ensemble.predict(X_test)
-        preds_loaded = loaded.predict(X_test)
-        np.testing.assert_array_equal(preds_orig, preds_loaded)
+        config_path = run_dirs[0] / "config.yaml"
+        assert config_path.exists()

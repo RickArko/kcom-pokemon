@@ -1,132 +1,139 @@
 # kcom-pokemon
 
-Kaggle Competition: [Pokemon TCG AI Battle Challenge Strategy](https://www.kaggle.com/competitions/pokemon-tcg-ai-battle-challenge-strategy)
+Kaggle Competition: [Pokemon TCG AI Battle Challenge](https://www.kaggle.com/competitions/pokemon-tcg-ai-battle) (Simulation) +
+[Strategy](https://www.kaggle.com/competitions/pokemon-tcg-ai-battle-challenge-strategy)
 
-Predict the outcome of Pokémon Trading Card Game battles from in-game state features (HP, bench size, hand/deck counts, prize progress, deck archetypes).
+Build an AI agent that plays the Pokemon Trading Card Game, then write a strategy report explaining your approach.
 
-**Evaluation Metric:** Accuracy  
-**Target column:** `winner`
+Two connected competitions:
+- **Simulation** — submit a `.tar.gz` agent. Evaluated by win rate in the arena.
+- **Strategy** — submit a ≤2000-word **writeup** explaining your agent's design. **$240,000 prize pool** (8 Finalists × $30,000). Evaluated by judges on clarity, originality, stability.
 
-## Happy Path — One Command
+## Quick Start
 
 ```bash
-# Requires Kaggle API token (see setup below)
-make all
+make install          # uv sync + kaggle auth (one-time)
+make download         # card reference data (one-time)
+make sim-download     # simulation SDK (join both competitions first)
+make test             # verify everything works
 ```
 
-This single command runs the entire pipeline:
+## Build and Submit
+
+```bash
+# 1. Create an agent + deck in workspace/
+mkdir -p workspace/exp001_baseline
+# ... write agent.py (subclass RuleBasedAgent) and deck.csv (60 Card IDs)
+
+# 2. Test locally
+make gauntlet
+
+# 3. Package for Kaggle
+make build-submit ARGS="--agent workspace/exp001_baseline/agent.py --deck workspace/exp001_baseline/deck.csv"
+
+# 4. Submit to the arena
+make submit SUBMISSION_FILE=submit/submission.tar.gz SUBMISSION_MSG="exp001: rule-based baseline"
+
+# 5. Write the strategy report (≤2000 words)
+# Submit at: https://www.kaggle.com/competitions/pokemon-tcg-ai-battle-challenge-strategy
+```
+
+See **[Iteration.md](Iteration.md)** for the full experiment log, suggested experiments, and workflow reference.
+
+## Pipeline
 
 ```mermaid
-graph LR
-    A[make all] --> B[make install]
-    B --> C[uv sync + auth]
-    C --> D[make download]
-    D --> E[fetch data from Kaggle]
-    E --> F[make train]
-    F --> G[train 5-fold ensemble]
-    G --> H[save submission.csv]
-    H --> I[make submit]
-    I --> J[upload to Kaggle]
-    J --> K[show leaderboard]
+flowchart TD
+    A[Card Data<br/>EN/JP_Card_Data.csv] --> B[Deck Builder<br/>60-card deck.csv]
+    B --> C[Agent Design]
+    D[Observation<br/>board + hands + options] --> C
+    C --> E{Rule-Based<br/>vs<br/>MCTS<br/>vs<br/>RL}
+    E --> F[Local Harness<br/>gauntlet tournament]
+    F --> G[Win Rate Analysis]
+    G --> H{Better?}
+    H -->|Yes| I[Build tar.gz]
+    H -->|No| C
+    I --> J[Submit Simulation]
+    J --> K[Leaderboard<br/>TrueSkill μ600]
+    K --> L[Meta Watch<br/>replay analysis]
+    L --> C
+    K --> M[Strategy Writeup<br/>≤2000 words]
+    M --> N[Submit Strategy]
 ```
+
+- **Agent interface** — `agent(obs_dict) -> list[int]`. First call returns a 60-card deck, subsequent calls return action indices.
+- **Game engine** — `cabt Engine` via `cg` package (compiled `.so`/`.dll`, ctypes wrapper). Downloaded via `make sim-download`.
+- **Search API** — `search_begin`/`search_step`/`search_end` for forward lookahead (MCTS, alpha-beta).
+- **Rating** — TrueSkill μ/σ (μ₀=600), win/loss only, latest 2 submissions evaluated.
+
+## Agent Architecture
+
+```python
+from pokemon.agent import RuleBasedAgent
+
+class MyAgent(RuleBasedAgent):
+    def __init__(self, deck, random_seed=42):
+        super().__init__(deck=deck, random_seed=random_seed)
+
+    def _act(self, obs: dict) -> list[int]:
+        # obs["options"] — available action indices
+        # obs["minCount"], obs["maxCount"] — how many to pick
+        # obs["board"], obs["hand"], obs["deck"] — full game state
+        return [obs["options"][0]]  # Replace with your logic
+```
+
+See `AGENTS.md` for the full agent interface spec, observation schema, and gotchas.
 
 ## Kaggle API Setup
 
 ```bash
-# Option A: Set environment variable
+# Option A: environment variable
 export KAGGLE_API_TOKEN=KGAT_<your-token>
 
-# Option B: Write token to file
+# Option B: token file
 echo -n "KGAT_<your-token>" > .kaggle/access_token
 chmod 600 .kaggle/access_token
-
-# Get your token at: https://www.kaggle.com/settings -> API -> Create New Token
 ```
 
-## Detailed Step-by-Step
-
-```bash
-# 1. Install dependencies + authenticate
-make install
-
-# 2. Download competition data
-make download
-
-# 3. Train ensemble & generate submission
-make train
-
-# 4. Submit to leaderboard
-make submit
-
-# 5. Run tests
-make test
-```
-
-## Custom Submission
-
-```bash
-# Submit a different file with custom message
-make submit SUBMISSION_FILE=outputs/submissions/experiment_v2.csv SUBMISSION_MSG="v2: label encoding + prize_diff interaction"
-```
+You must **join both competitions** (Accept Rules) on Kaggle before `make download` and `make sim-download` work:
+- [Simulation](https://www.kaggle.com/competitions/pokemon-tcg-ai-battle)
+- [Strategy](https://www.kaggle.com/competitions/pokemon-tcg-ai-battle-challenge-strategy)
 
 ## Development
 
 ```bash
-make lint      # ruff check
-make format    # ruff format (check only)
-make test      # pytest
-make submit    # submit to Kaggle leaderboard
+make lint           # ruff check
+make format         # ruff format --check
+make format-fix     # apply formatting
+make test           # pytest (mock observations, no engine needed)
+make gauntlet       # local agent tournament (requires SDK)
 ```
 
 ## Repository Structure
 
 ```
-├── config/config.yaml          # Experiment configuration
-├── data/                       # Train/test CSVs (download with make download)
-├── src/pokemon/                # Python package
-│   ├── data.py                 # Data loading & preprocessing
-│   ├── features.py             # Feature engineering (diffs, interactions, encoding)
-│   ├── models.py               # LGBM + XGB + CatBoost + stacking ensemble
-│   └── tracking.py             # Experiment run logger
-├── scripts/
-│   ├── train.py                # End-to-end training pipeline
-│   ├── predict.py              # Inference & submission generation
-│   └── compare.py              # Compare experiment runs
-├── tests/
-│   ├── test_models.py          # Unit tests
-│   └── test_integration.py     # Integration tests (synthetic data)
-├── outputs/submissions/        # Generated submission CSVs
-├── Makefile                    # Automation targets
-└── pyproject.toml              # Project & dependency config (uv sync)
+src/pokemon/               # Core package
+  agent.py                 # Agent ABC + RandomAgent + RuleBasedAgent
+  deck.py                  # 60-card deck builder + CSV I/O
+  data.py                  # Card data loader
+  harness.py               # Local match runner + gauntlet
+  tracking.py              # Experiment logger
+config/
+  agent.yaml               # Agent config template
+workspace/
+  expNNN_name/             # Experiment directories
+    agent.py               # Your agent subclass
+    deck.csv               # 60 Card IDs
+    SESSION_NOTES.md       # Hypothesis, results, takeaways
+scripts/
+  gauntlet.py              # Tournament runner
+  build_submission.py      # Package agent for Kaggle
+tests/
+  test_agent.py            # Agent interface tests
+  test_deck.py             # Deck builder tests
+  test_integration.py      # E2E pipeline tests
+data/
+  raw/                     # Card reference CSVs (EN/JP_Card_Data)
+  sim_sample/              # Simulation SDK (cg engine)
+submit/                    # Built submission tarballs
 ```
-
-## Pipeline Architecture
-
-```mermaid
-flowchart TD
-    A[Raw Battle Data] --> B[Feature Engineering]
-    B --> C[drop ID/metadata cols]
-    B --> D[pairwise advantage diffs]
-    B --> E[hp_diff, bench_diff, hand_diff, deck_diff, prize_diff]
-
-    E --> F[Stratified 5-Fold CV]
-
-    F --> G[LightGBM]
-    F --> H[XGBoost]
-    F --> I[CatBoost]
-
-    G --> J[OOF Probabilities]
-    H --> J
-    I --> J
-
-    J --> K[Logistic Regression Meta-Model]
-    K --> L[Final Predictions]
-    L --> M[submission.csv]
-```
-
-## Approach
-
-1. **Feature Engineering** — Drop ID/metadata, compute player-vs-opponent advantage diffs (HP, bench size, hand count, deck count, prizes taken), one-hot encode deck and Pokémon names.
-2. **Base Models** — LightGBM, XGBoost, CatBoost trained with stratified 5-fold cross-validation.
-3. **Stacking** — Logistic Regression meta-model on out-of-fold probability predictions.
-4. **Evaluation** — Accuracy (competition metric).

@@ -1,0 +1,18 @@
+agent:
+  deck: [1, 2, 3]  # placeholder — replace with actual 60 card IDs
+
+rule_based:
+  # Priority thresholds (tune via experiments)
+  # Positive hp_lead means our active pokemon has more HP
+  lethal_threshold: 0.8     # attack if enemy HP ≤ our attack * this
+  retreat_hp_threshold: 30  # retreat if our active HP below this
+  conserve_energy: true      # prefer energy attachment over retreat
+
+mcts:
+  num_simulations: 100
+  exploration_constant: 1.4
+  max_search_depth: 10
+
+tournament:
+  n_matches: 20
+  max_turns: 100

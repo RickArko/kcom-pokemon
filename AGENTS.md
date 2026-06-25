@@ -1,121 +1,76 @@
 # AGENTS.md — kcom-pokemon
 
-Kaggle Competition: [Pokemon TCG AI Battle Challenge Strategy](https://www.kaggle.com/competitions/pokemon-tcg-ai-battle-challenge-strategy)
-Predict the winner of a Pokemon TCG battle from in-game state.
-Metric: **accuracy**. Target column: `winner`.
+Kaggle Simulation + Strategy competitions. Build a Pokemon TCG AI agent.
 
 ## Commands
 
-All Python invocations **must** be prefixed with `uv run` (uv manages the env;
-`.venv` exists but is not on PATH — bare `python`/`pytest` will fail or hit the
-wrong interpreter).
+All Python **must** be prefixed with `uv run` (`.venv` not on PATH).
 
-| Command | Purpose |
+| Command | What it does |
 |---|---|
-| `make install` | `uv sync --extra dev` + editable install + kaggle auth check |
-| `make download` | Fetch/expand competition CSVs into `data/` (requires auth) |
-| `make train CONFIG=config/foo.yaml RUN_NAME=bar` | Train ensemble & save a run |
-| `make train ARGS="--flag x"` | Pass extra args to `scripts/train.py` |
-| `make predict` | `uv run python scripts/predict.py $(ARGS)` |
+| `make install` | `uv sync --extra dev` + editable install + auth check |
+| `make download` | Fetch card CSVs to `data/raw/` |
+| `make sim-download` | Fetch `cg` game engine to `data/sim_sample/` (join competition first) |
 | `make test` | `uv run pytest tests/ -v` |
-| `make test ARGS="-k name -x"` | Focused test run |
-| `make lint` | `ruff check src/ scripts/ tests/` (check only, no autofix) |
-| `make format` | `ruff format ... --check` (check only — does NOT rewrite) |
+| `make test ARGS="-k name -x"` | Focused test |
+| `make lint` | `ruff check src/ scripts/ tests/` (no autofix) |
+| `make format` | `ruff format --check` (no rewrite) |
 | `make format-fix` | Apply ruff formatting |
-| `make submit SUBMISSION_FILE=... SUBMISSION_MSG="..."` | Upload to Kaggle + show leaderboard |
+| `make gauntlet` | Run agent tournament (requires SDK) |
+| `make build-submit ARGS="--agent ... --deck ..."` | Package `.tar.gz` |
+| `make submit` | Upload to Kaggle + show leaderboard |
 
-Verification loop after changes: `make lint && make format && make test`.
-No typechecker / mypy configured.
+Verification loop: `make lint && make format && make test`. No typechecker configured.
 
 ## Architecture
 
-- **Package**: `src/pokemon/` — `data.py` (loaders), `features.py`
-  (`StrategyFeatureEngineer`), `models.py` (`StackingEnsemble`), `tracking.py`
-  (run logger). Installed editable via hatchling (`packages = ["src/pokemon"]`).
-- **Ensemble**: LGBM + XGBoost + CatBoost base models → LogisticRegression
-  meta-model on out-of-fold probabilities. Stratified k-fold CV.
-- **Config-driven**: YAML in `config/` controls features, CV, and every model
-  hyperparam. `config/config.yaml` = tuned default (5-fold, 1000 estimators);
-  `config/baseline.yaml` = fast reference (3-fold, 250 estimators).
-- **Experiments** live in `config/experiments/` — copy an existing config to
-  start a new one.
-- **Each `make train`** creates `outputs/runs/<timestamp>_<name>/` containing a
-  frozen `config.yaml`, `metrics.json`, `models/ensemble.joblib`, and
-  `submission.csv`. Also writes the canonical `outputs/submissions/submission.csv`.
-- **Re-predict without retraining**: `uv run python scripts/predict.py --run-dir outputs/runs/<name>`
-- **Compare runs**: `uv run python scripts/compare.py` (reads `outputs/runs/`).
+- **Package**: `src/pokemon/` — `agent.py` (ABC + baselines), `deck.py`, `data.py`, `harness.py`, `tracking.py`.
+- **Agent interface**: `agent(obs_dict) -> list[int]`.
+  - First call (`obs["select"] is None`): return 60-card deck (Card ID list).
+  - Subsequent calls: return choice indices (`minCount ≤ len ≤ maxCount`, no duplicates).
+- **Game engine**: `cg` package (compiled `.so`/`.dll`, ctypes wrapper) in `data/sim_sample/cg/`. gitignored.
+- **Search API**: `search_begin`/`search_step`/`search_end` for forward lookahead (MCTS, alpha-beta).
+- **Rating**: TrueSkill μ/σ (μ₀=600), win/loss only, latest 2 submissions count.
+- **Experiments**: `workspace/expNNN_name/` with `agent.py`, `deck.csv`, `SESSION_NOTES.md`.
 
-## Feature Engineering — `StrategyFeatureEngineer`
+## Agent Development
 
-The engineer performs three steps in order:
+```python
+from pokemon.agent import RuleBasedAgent
 
-1. **Drop** low-signal ID/metadata columns (`drop_cols`).
-2. **Diff pairs** (`diff_pairs`): for each `(col_a, col_b)`, create
-   `col_a_col_b = col_a - col_b`.  Only pairs where both columns exist are
-   computed; missing pairs are silently skipped.
-3. **Interaction pairs** (`interaction_pairs`): for each `(col_a, col_b)`,
-   create `col_a_x_col_b = col_a * col_b`.  Both operand columns must survive
-   step 1 or be produced by step 2.  Invalid pairs warn and are skipped.
-4. **Encode categoricals** (`cat_cols`, `encoding`):
-   - `"ohe"` (default) — OneHotEncoder; new columns named `{col}_{value}`.
-   - `"label"` — LabelEncoder → int32.
-   - `"passthrough"` — no transformation.
-   If `cat_cols=None`, all remaining object-dtype columns are auto-encoded.
-   If `cat_cols=[]`, no encoding is applied (caller must ensure no string
-   columns remain, or models will fail).
+class MyAgent(RuleBasedAgent):
+    def __init__(self, deck, random_seed=42):
+        super().__init__(deck=deck, random_seed=random_seed)
 
-### Default diff pairs (applied when data has these columns)
+    def _act(self, obs: dict) -> list[int]:
+        return [obs["options"][0]]
+```
 
-| Pair | Resulting column | Meaning (positive = player advantage) |
-|---|---|---|
-| `player_active_pokemon_hp`, `opponent_active_pokemon_hp` | `player_active_pokemon_hp_opponent_active_pokemon_hp` | Player HP lead |
-| `player_bench_count`, `opponent_bench_count` | `player_bench_count_opponent_bench_count` | Bench size lead |
-| `player_hand_count`, `opponent_hand_count` | `player_hand_count_opponent_hand_count` | Hand size lead |
-| `player_deck_count`, `opponent_deck_count` | `player_deck_count_opponent_deck_count` | Deck size lead |
-| `opponent_prize_count`, `player_prize_count` | `opponent_prize_count_player_prize_count` | Prizes-taken lead (opp taken − player taken → positive = player has taken fewer → player is behind on prizes) |
+Subclass `RuleBasedAgent` or `Agent` directly. Agents must be registered in `scripts/gauntlet.py` to participate in tournaments.
 
-## Conventions & gotchas
+## Key gotchas
 
-- `encoding` param: `"ohe"` (default), `"label"` (LabelEncoder → int32),
-  `"passthrough"` (raw strings).  Set via `features.encoding` in config.
-- `cat_cols=[]` explicitly disables encoding; ensure no object-dtype columns
-  survive or sklearn models will raise `ValueError`.
-- `catboost_info/` is written during training and is gitignored — safe to delete.
-- `from __future__ import annotations` is used in all source files.
+- `from __future__ import annotations` used in all source files.
 - Ruff: line-length 100, `target-version = "py311"`, rules E/F/I.
-- Runtime: Python 3.12 (`.python-version`); `requires-python = ">=3.11"`.
+- Python 3.12 (`.python-version`), `requires-python = ">=3.11"`.
+- Deck must be exactly **60 cards** (Kaggle enforces).
+- `make build-submit` copies your `agent.py` → `main.py` in the tarball; the `--agent` path is the source file.
+- `harness.run_gauntlet` does round-robin with swapped sides — each ordered pair plays `n_matches` games.
+- Kaggle auth: `.kaggle/access_token` (chmod 600) or env var `KAGGLE_API_TOKEN`. Also supports legacy `~/.kaggle/kaggle.json`.
+- You **must join** both competitions on Kaggle before `make download` / `make sim-download` (otherwise 403).
+- No CI / GitHub Actions configured.
 
 ## Testing
 
-- Tests use **synthetic battle-state data** (the `synthetic_battle_data` fixture in
-  `tests/test_integration.py`) — `make test` works offline, no Kaggle download needed.
-- `tests/test_models.py` covers the feature transformer, ensemble, and
-  save/load roundtrip; `tests/test_integration.py` covers the end-to-end
-  pipeline + submission format.
+- Tests use mock observations — no game engine required.
+- `tests/test_agent.py` — agent interface, RandomAgent, RuleBasedAgent.
+- `tests/test_deck.py` — deck builder and card data loading.
+- `tests/test_integration.py` — full pipeline (agent + deck + tracking).
 
-## Kaggle auth
+## Gitignored
 
-- Token file: `.kaggle/access_token` (chmod 600), or env var `KAGGLE_API_TOKEN`.
-  `make download` / `make submit` read the file first, then fall back to the env var.
-  Legacy `~/.kaggle/kaggle.json` also works.
-- You must **join the competition** (Accept Rules) on the Kaggle web page before
-  `make download` works — otherwise it 403s.
+`data/raw/*.csv`, `data/sim_sample/`, `submit/`, `workspace/results/`, `*.joblib`, `*.pkl`, `*.cbm`, `*.tar.gz`, `.kaggle/*` (except `*.example`), `.ai/*`, `.venv/`, caches.
 
-## Gitignored artifacts (won't appear in `git status`)
+## References
 
-`data/*.csv` and `*.zip`, `outputs/submissions/*` (except `.gitkeep`),
-`outputs/runs/`, `models/`, `*.joblib`/`*.pkl`/`*.cbm`, `catboost_info/`,
-`.kaggle/*` (except `*.example`), `.ai/*`, `.venv/`, caches. Run data lives only
-on disk — re-run `make download` on a fresh clone.
-
-## Experiment state
-
-No experiments have been run yet.  Start with:
-
-```bash
-make train CONFIG=config/baseline.yaml RUN_NAME=baseline
-uv run python scripts/compare.py
-```
-
-Read **`Iteration.md`** before running new experiments to avoid repeating
-completed work and to understand the current best direction.
+- **`Iteration.md`** — experiment log, suggested directions, workflow reference. Read before starting new experiments.
