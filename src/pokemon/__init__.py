@@ -4,6 +4,7 @@ from pokemon.agent import Agent, RandomAgent, RuleBasedAgent
 from pokemon.card_db import CardDB, get_card_db
 from pokemon.data import load_card_data
 from pokemon.deck import Deck, build_deck
+from pokemon.search import MCTSResult, mcts_search
 from pokemon.state import GameState, parse_obs
 from pokemon.tracking import track_experiment
 
@@ -19,4 +20,6 @@ __all__ = [
     "get_card_db",
     "GameState",
     "parse_obs",
+    "MCTSResult",
+    "mcts_search",
 ]

@@ -519,6 +519,7 @@ class LucarioHeuristicAgent(RuleBasedAgent):
 # the Agent subclass).  Kaggle instead calls the module-level ``agent`` function
 # defined here.  ``make build-submit`` copies this file to ``main.py``.
 
+
 def _read_deck_csv() -> list[int]:
     path = "deck.csv"
     if not os.path.exists(path):
