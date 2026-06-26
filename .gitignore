@@ -68,3 +68,4 @@ catboost_info/
 *SESSION_NOTES.md
 workspace/results/*
 submit/*
+scripts/*

@@ -5,10 +5,13 @@ description = "Kaggle competition: Pokemon TCG AI Battle Challenge - agent build
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "jupyter[dev]>=1.1.1",
     "kaggle>=2.2",
+    "matplotlib[dev]>=3.11.0",
     "numpy>=1.24",
     "pandas>=2.0",
     "pyyaml>=6.0",
+    "seaborn[dev]>=0.13.2",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +31,7 @@ packages = ["src/pokemon"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["notebooks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

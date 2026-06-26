@@ -109,6 +109,47 @@ class AttackInfo:
     def cost_count(self) -> int:
         return len(self.energies)
 
+    @property
+    def is_effect_damage(self) -> bool:
+        """True if printed damage is 0 but the text describes a damage formula."""
+        return self.damage <= 0 and bool(self.text) and "damage" in self.text.lower()
+
+    def estimate_damage(self, energy_count: int = 0, discard_energy_count: int = 0) -> int:
+        """Return printed damage, or an estimate for effect-damage attacks.
+
+        For attacks with ``damage == 0`` whose text describes a damage formula
+        (e.g. "20 damage for each ... Energy"), parse the per-unit value and
+        multiply by the relevant count.  Returns 0 if the text can't be parsed
+        or describes self-damage / non-damage effects.
+        """
+        if self.damage > 0:
+            return self.damage
+        if not self.text:
+            return 0
+        import re
+
+        text = self.text.lower()
+        # Self-damaging attacks are risky — estimate low.
+        if "this pokémon does" in text and "damage to itself" in text:
+            return 0
+        # Pattern: "N damage for each ... Energy"
+        m = re.search(r"(\d+)\s+damage\s+for\s+each.*?energy", text)
+        if m:
+            per = int(m.group(1))
+            # "discard pile" → use discard_energy_count; otherwise use energy_count
+            if "discard" in text:
+                return per * max(discard_energy_count, 1)
+            return per * max(energy_count, 1)
+        # Pattern: "N times" or "Nx" with energy context
+        m = re.search(r"(\d+)\s*(?:×|x)\s*.*?energy", text)
+        if m:
+            per = int(m.group(1))
+            return per * max(energy_count, 1)
+        # Fallback: if text mentions damage but we can't parse, estimate 80
+        if "damage" in text:
+            return 80
+        return 0
+
 
 @dataclass
 class MoveInfo:

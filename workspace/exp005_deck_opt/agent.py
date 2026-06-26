@@ -19,15 +19,23 @@ Deck: same Mega Lucario ex deck as exp002 (to isolate search impact).
 
 from __future__ import annotations
 
+# Reuse the exp002 heuristic as the fallback policy.
+import importlib.util as _ilu
 import logging
 import os
 import time
+from pathlib import Path as _Path
 
 from pokemon.agent import RuleBasedAgent
 from pokemon.card_db import CardDB, get_card_db
-from pokemon.heuristic import LucarioHeuristicAgent as _HeuristicAgent
 from pokemon.search import MCTSResult, mcts_search
 from pokemon.state import parse_obs
+
+_exp002_path = _Path("workspace/exp002_lucario_heuristic/agent.py")
+_spec = _ilu.spec_from_file_location("_exp002_heuristic", str(_exp002_path))
+_exp002_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_exp002_mod)
+_HeuristicAgent = _exp002_mod.LucarioHeuristicAgent
 
 logger = logging.getLogger(__name__)
 
