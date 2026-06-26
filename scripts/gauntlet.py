@@ -13,6 +13,7 @@ import argparse
 import importlib.util
 import inspect
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -137,6 +138,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="List experiments and exit",
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast tuning mode: cut MCTS budget (sets GAUNTLET_FAST env var, read by MCTS agents).",
+    )
     return parser.parse_args()
 
 
@@ -146,6 +152,10 @@ def main() -> None:
     if args.list:
         _list_experiments()
         return
+
+    if args.fast:
+        os.environ["GAUNTLET_FAST"] = "1"
+        logger.info("Fast tuning mode enabled (GAUNTLET_FAST=1)")
 
     try:
         import cg.game  # noqa: F401

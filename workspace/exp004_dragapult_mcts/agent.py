@@ -1,25 +1,20 @@
-"""exp003 — Lucario MCTS agent (Phase 2).
+"""exp004 — Dragapult MCTS agent with opponent modeling (Phase 3).
 
-Wraps the exp002 heuristic agent with Monte Carlo Tree Search over the ``cg``
-search API.  MCTS runs only on MAIN selects (the high-value decisions); every
-other select type (YES_NO, CARD targeting, ENERGY, ATTACK, COUNT, EVOLVE) and
-any search failure falls back to the exp002 heuristic, so the agent never
-forfeits.
+Same MCTS architecture as exp003 but with the Dragapult ex deck and an
+opponent archetype classifier.  The classifier tracks opponent card plays from
+the observation logs and, once confident, passes the predicted opponent deck
+to MCTS as a better-than-mirror opponent model.  Counter-strategy hints
+adjust aggression and bench protection based on the identified matchup.
 
-Search parameters (start conservative, per the experimentation strategy):
-    simulations: 50
-    exploration_constant: 1.4 (UCB1)
-    rollout_depth: 20 plies
-    time_budget: 0.8 s per decision
-    rollout policy: fast inline (prefer ATTACK, else END, else random)
-    opponent model: mirror prior (opponent deck = our deck)
-
-Deck: same Mega Lucario ex deck as exp002 (to isolate search impact).
+Deck: Dragapult ex (Dragon). Dreepy → Drakloak → Dragapult ex, using
+Fire + Psychic energy.  Dragapult ex is Tera (no bench damage while benched)
+with Phantom Dive (200 dmg + 6 counters on opponent's bench) and Jet Headbutt
+(70 dmg, colorless).
 """
 
 from __future__ import annotations
 
-# Reuse the exp002 heuristic as the fallback policy.
+# Reuse the exp002 heuristic as the fallback + rollout policy.
 import importlib.util as _ilu
 import logging
 import os
@@ -28,11 +23,12 @@ from pathlib import Path as _Path
 
 from pokemon.agent import RuleBasedAgent
 from pokemon.card_db import CardDB, get_card_db
+from pokemon.opponent import OpponentClassifier, archetype_deck_list, counter_strategy
 from pokemon.search import MCTSResult, mcts_search
 from pokemon.state import parse_obs
 
 _exp002_path = _Path("workspace/exp002_lucario_heuristic/agent.py")
-_spec = _ilu.spec_from_file_location("_exp002_heuristic", str(_exp002_path))
+_spec = _ilu.spec_from_file_location("_exp002_heuristic_dragapult", str(_exp002_path))
 _exp002_mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_exp002_mod)
 _HeuristicAgent = _exp002_mod.LucarioHeuristicAgent
@@ -40,8 +36,8 @@ _HeuristicAgent = _exp002_mod.LucarioHeuristicAgent
 logger = logging.getLogger(__name__)
 
 
-class LucarioMCTSAgent(RuleBasedAgent):
-    """MCTS agent for the Mega Lucario ex deck (falls back to exp002 heuristic)."""
+class DragapultMCTSAgent(RuleBasedAgent):
+    """MCTS agent for the Dragapult ex deck with opponent modeling."""
 
     def __init__(
         self,
@@ -52,7 +48,6 @@ class LucarioMCTSAgent(RuleBasedAgent):
         time_budget: float = 1.5,
         rollout_depth: int = 25,
         exploration_c: float = 1.4,
-        opponent_deck_hint: list[int] | None = None,
         use_heuristic_rollout: bool = True,
         rollout_epsilon: float = 0.25,
         override_threshold: float = 0.05,
@@ -65,17 +60,14 @@ class LucarioMCTSAgent(RuleBasedAgent):
         self.time_budget = time_budget
         self.rollout_depth = rollout_depth
         self.exploration_c = exploration_c
-        self.opponent_deck_hint = opponent_deck_hint
         self.use_heuristic_rollout = use_heuristic_rollout
         self.rollout_epsilon = rollout_epsilon
         self.override_threshold = override_threshold
         self.mcts_when_second = mcts_when_second
-        # Gauntlet --fast override: cut MCTS budget for quick tuning runs.
-        if os.environ.get("GAUNTLET_FAST"):
-            self.simulations = 20
-            self.time_budget = 0.3
-            self.rollout_depth = 15
-            self.use_heuristic_rollout = False
+        # opponent modeling
+        self._classifier: OpponentClassifier | None = None
+        self._opp_hint: list[int] | None = None
+        self._strategy_hints: dict = {}
         # stats
         self._mcts_calls = 0
         self._mcts_fallbacks = 0
@@ -86,14 +78,12 @@ class LucarioMCTSAgent(RuleBasedAgent):
             self._card_db = get_card_db()
         return self._card_db
 
-    def _make_rollout_policy(self):
-        """Build an epsilon-greedy rollout policy around the exp002 heuristic.
+    def _ensure_classifier(self, your_index: int) -> OpponentClassifier:
+        if self._classifier is None:
+            self._classifier = OpponentClassifier(your_index=your_index)
+        return self._classifier
 
-        With probability ``rollout_epsilon``, pick a random valid action
-        (exploration); otherwise use the heuristic's top choice (exploitation).
-        This breaks the deterministic-rollout pathology where every simulation
-        from the same node yields the same value.
-        """
+    def _make_rollout_policy(self):
         if not self.use_heuristic_rollout:
             return None
         heuristic_act = self._heuristic._act
@@ -102,7 +92,6 @@ class LucarioMCTSAgent(RuleBasedAgent):
 
         def _rollout(obs_dict: dict) -> list[int]:
             if rng.random() < eps:
-                # random valid action for exploration
                 sel = obs_dict.get("select") or {}
                 opts = sel.get("option") or []
                 if not opts:
@@ -116,20 +105,29 @@ class LucarioMCTSAgent(RuleBasedAgent):
         return _rollout
 
     def _act(self, obs: dict) -> list[int]:
-        # Only run MCTS on MAIN selects with options; everything else uses the
-        # heuristic (which already handles all select types safely).
         state = parse_obs(obs)
-        if state is None or not state.select.is_main or not state.select.options:
+        if state is None:
             return self._heuristic._act(obs)
 
-        # MCTS helps most when we have the initiative (going first).  When
-        # reacting (going second), the heuristic's reactive priorities are
-        # better than spending time on a search that assumes a mirror opponent.
+        # Update opponent classifier with new logs.
+        clf = self._ensure_classifier(state.your_index)
+        clf.update(state)
+        classification = clf.classify()
+        if classification.identified:
+            self._opp_hint = archetype_deck_list(classification.archetype)
+            self._strategy_hints = counter_strategy(classification.archetype)
+        elif not self._opp_hint:
+            self._opp_hint = None  # mirror prior
+
+        # Non-MAIN selects always use the heuristic.
+        if not state.select.is_main or not state.select.options:
+            return self._heuristic._act(obs)
+
+        # Initiative-conditional MCTS (same finding as exp003).
         if not self.mcts_when_second and state.first_player != -1:
             if state.your_index != state.first_player:
                 return self._heuristic._act(obs)
 
-        # Heuristic baseline action — used as the default and as a tie-breaker.
         heuristic_action = self._heuristic._act(obs)
 
         try:
@@ -138,7 +136,7 @@ class LucarioMCTSAgent(RuleBasedAgent):
             result: MCTSResult = mcts_search(
                 obs_dict=obs,
                 my_deck=self._deck,
-                opponent_deck_hint=self.opponent_deck_hint,
+                opponent_deck_hint=self._opp_hint,
                 card_db=self._db(),
                 simulations=self.simulations,
                 time_budget=self.time_budget,
@@ -153,9 +151,6 @@ class LucarioMCTSAgent(RuleBasedAgent):
                 self._mcts_fallbacks += 1
                 return heuristic_action
 
-            # Hybrid override: only use MCTS action if it differs from the
-            # heuristic AND has a clearly better win rate.  This prevents MCTS
-            # from making worse decisions when its search is noisy.
             mcts_idx = result.action[0] if result.action else -1
             heur_idx = heuristic_action[0] if heuristic_action else -1
             if mcts_idx == heur_idx:
@@ -165,7 +160,7 @@ class LucarioMCTSAgent(RuleBasedAgent):
             if mcts_wr - heur_wr > self.override_threshold:
                 return result.action
             return heuristic_action
-        except Exception as e:  # noqa: BLE001 - never forfeit on a search error
+        except Exception as e:  # noqa: BLE001
             logger.debug("MCTS failed (%s); falling back to heuristic.", e)
             self._mcts_fallbacks += 1
             return heuristic_action
@@ -177,6 +172,13 @@ class LucarioMCTSAgent(RuleBasedAgent):
             "mcts_fallbacks": self._mcts_fallbacks,
             "avg_decision_seconds": round(avg, 4),
             "total_search_seconds": round(self._mcts_total_time, 2),
+            "opponent_archetype": self._classifier.classify().archetype
+            if self._classifier
+            else None,
+            "opponent_confidence": round(self._classifier.classify().confidence, 3)
+            if self._classifier
+            else 0.0,
+            "using_opp_hint": self._opp_hint is not None,
         }
 
 
@@ -189,12 +191,12 @@ def _read_deck_csv() -> list[int]:
         return [int(line) for line in f.read().split("\n") if line.strip()][:60]
 
 
-_agent_instance: LucarioMCTSAgent | None = None
+_agent_instance: DragapultMCTSAgent | None = None
 
 
 def agent(obs_dict: dict) -> list[int]:
-    """Kaggle entry point: ``agent(obs_dict) -> list[int]``."""
+    """Kaggle entry point."""
     global _agent_instance
     if _agent_instance is None:
-        _agent_instance = LucarioMCTSAgent(deck=_read_deck_csv())
+        _agent_instance = DragapultMCTSAgent(deck=_read_deck_csv())
     return _agent_instance(obs_dict)

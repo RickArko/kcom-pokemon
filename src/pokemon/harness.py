@@ -168,6 +168,7 @@ def run_gauntlet(
             name_b, agent_b = agents[j]
 
             wins_a = 0
+            pairing_start = time.time()
             for m in range(n_matches):
                 result = run_match(agent_a, agent_b, max_turns=max_turns)
                 if result["winner"] == 0:
@@ -177,6 +178,23 @@ def run_gauntlet(
                     win_counts[name_b] += 1
                 match_counts[name_a] += 1
                 match_counts[name_b] += 1
+                p_elapsed = time.time() - pairing_start
+                avg = p_elapsed / (m + 1)
+                eta = avg * (n_matches - m - 1)
+                tag = "err" if result["error"] else "ok"
+                logger.info(
+                    "    [%d/%d] %s vs %s: %d-%d  %.1fs  avg=%.2fs eta=%.0fs (%s)",
+                    m + 1,
+                    n_matches,
+                    name_a,
+                    name_b,
+                    wins_a,
+                    m + 1 - wins_a,
+                    p_elapsed,
+                    avg,
+                    eta,
+                    tag,
+                )
 
             elapsed = time.time() - total_start
             logger.info(
