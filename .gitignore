@@ -64,3 +64,5 @@ mlruns/
 catboost_info/
 
 .ai/*
+*SESSION_NOTES.md
+workspace/results/*

@@ -75,4 +75,10 @@ class RuleBasedAgent(Agent):
         options = obs.get("options", [])
         if not options:
             return []
-        return [options[0]]
+        min_count = int(obs.get("minCount", 1) or 1)
+        max_count = int(obs.get("maxCount", len(options)) or len(options))
+        # Pick the minimum required count (first options) so the baseline always
+        # returns a valid selection and never forfeits on multi-select prompts.
+        n = min_count if min_count > 0 else (1 if max_count > 0 else 0)
+        n = min(n, len(options))
+        return [options[i] for i in range(n)]

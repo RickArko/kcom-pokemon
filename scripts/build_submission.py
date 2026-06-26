@@ -45,6 +45,12 @@ def parse_args() -> argparse.Namespace:
         help="Path to the cg engine package",
     )
     parser.add_argument(
+        "--pkg-dir",
+        type=str,
+        default="src/pokemon",
+        help="Path to the pokemon helper package to bundle (so `import pokemon` works)",
+    )
+    parser.add_argument(
         "--out",
         type=str,
         default="submit/",
@@ -58,9 +64,15 @@ def main() -> None:
     agent_path = Path(args.agent)
     deck_path = Path(args.deck)
     cg_dir = Path(args.cg_dir)
+    pkg_dir = Path(args.pkg_dir)
     out_dir = Path(args.out)
 
-    for path, name in [(agent_path, "agent"), (deck_path, "deck"), (cg_dir, "cg engine")]:
+    for path, name in [
+        (agent_path, "agent"),
+        (deck_path, "deck"),
+        (cg_dir, "cg engine"),
+        (pkg_dir, "pokemon package"),
+    ]:
         if not path.exists():
             logger.error("%s not found at %s", name, path)
             raise SystemExit(1)
@@ -74,6 +86,12 @@ def main() -> None:
     shutil.copy(agent_path, bundle_dir / "main.py")
     shutil.copy(deck_path, bundle_dir / "deck.csv")
     shutil.copytree(cg_dir, bundle_dir / "cg", dirs_exist_ok=True)
+    # Bundle the pokemon helper package so `from pokemon...` imports resolve on
+    # Kaggle (the simulation env only ships the cg engine + the agent tarball).
+    shutil.copytree(pkg_dir, bundle_dir / "pokemon", dirs_exist_ok=True)
+    # Strip pycache from the bundled package to keep the tarball lean.
+    for pycache in bundle_dir.rglob("__pycache__"):
+        shutil.rmtree(pycache, ignore_errors=True)
 
     tarball = out_dir / "submission.tar.gz"
     with tarfile.open(tarball, "w:gz") as tar:
