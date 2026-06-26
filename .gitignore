@@ -25,6 +25,7 @@ outputs/submissions/*
 !outputs/submissions/.gitkeep
 outputs/runs/
 submissions/
+workspace/results/
 
 # Models
 models/
@@ -66,3 +67,4 @@ catboost_info/
 .ai/*
 *SESSION_NOTES.md
 workspace/results/*
+submit/*
