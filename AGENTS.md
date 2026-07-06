@@ -77,3 +77,4 @@ Subclass `RuleBasedAgent` or `Agent` directly. Agents are auto-discovered from `
 ## References
 
 - **`Iteration.md`** — experiment log, suggested directions, workflow reference. Read before starting new experiments.
+- **`plans/eda-informed-improvements.md`** — EDA-driven strategy to improve the current best agent (exp003 Lucario MCTS) through deck optimization, prize-race heuristics, phase detection, and MCTS enhancement.

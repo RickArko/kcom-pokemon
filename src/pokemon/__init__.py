@@ -8,6 +8,7 @@ from pokemon.opponent import OpponentClassifier, counter_strategy
 from pokemon.search import MCTSResult, mcts_search
 from pokemon.state import GameState, parse_obs
 from pokemon.tracking import track_experiment
+from pokemon.visualize import Replay, ReplayPlayer, record_match, render, run_interactive
 
 __all__ = [
     "load_card_data",
@@ -25,4 +26,9 @@ __all__ = [
     "mcts_search",
     "OpponentClassifier",
     "counter_strategy",
+    "Replay",
+    "ReplayPlayer",
+    "render",
+    "record_match",
+    "run_interactive",
 ]

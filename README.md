@@ -84,6 +84,58 @@ class MyAgent(RuleBasedAgent):
 
 See `AGENTS.md` for the full agent interface spec, observation schema, and gotchas.
 
+## Visualization & Replay
+
+See **[docs/visualize.md](docs/visualize.md)** for the full user guide with
+end-to-end examples.
+
+Record matches, step through them interactively, or watch live as agents play:
+
+```bash
+# Record a match between two experiments
+uv run python scripts/visualize.py record \
+    --agent0 workspace/exp002_lucario_heuristic/agent.py \
+    --deck0 workspace/exp002_lucario_heuristic/deck.csv \
+    --agent1 workspace/exp003_lucario_mcts/agent.py \
+    --deck1 workspace/exp003_lucario_mcts/deck.csv \
+    --output data/replays/mirror.json
+
+# Step through the replay interactively
+uv run python scripts/visualize.py replay data/replays/mirror.json
+
+# Watch live with per-step terminal display
+uv run python scripts/visualize.py run \
+    --agent0 workspace/exp002_lucario_heuristic/agent.py \
+    --deck0 workspace/exp002_lucario_heuristic/deck.csv \
+    --agent1 workspace/exp003_lucario_mcts/agent.py \
+    --deck1 workspace/exp003_lucario_mcts/deck.csv \
+    --delay 0.5
+
+# Render a single observation as formatted text
+uv run python scripts/visualize.py render obs.json --actions 2 5
+```
+
+Or use the library API in Python:
+
+```python
+from pokemon.visualize import render, record_match, Replay, ReplayPlayer
+
+# Render a single observation
+print(render(obs_dict))
+
+# Record a full match
+replay, result = record_match(my_agent, opp_agent, output="match.json")
+
+# Interactive replay from code
+player = ReplayPlayer(Replay.load("match.json"))
+player.next()
+print(player.render_current())
+```
+
+The tool works with or without the game engine:
+- **`render`** and **`replay`** work on saved data — no engine needed.
+- **`run`** and **`record`** require the `cg` engine (`make sim-download`).
+
 ## Kaggle API Setup
 
 ```bash
@@ -118,6 +170,7 @@ src/pokemon/               # Core package
   data.py                  # Card data loader
   harness.py               # Local match runner + gauntlet
   tracking.py              # Experiment logger
+  visualize.py             # Game visualizer + replay recorder
 config/
   agent.yaml               # Agent config template
 workspace/
@@ -128,12 +181,17 @@ workspace/
 scripts/
   gauntlet.py              # Tournament runner
   build_submission.py      # Package agent for Kaggle
+  visualize.py             # CLI entry point for visualizer
 tests/
   test_agent.py            # Agent interface tests
   test_deck.py             # Deck builder tests
   test_integration.py      # E2E pipeline tests
+  test_visualize.py        # Visualizer tests
 data/
+  replays/                 # Recorded match replay JSON files
   raw/                     # Card reference CSVs (EN/JP_Card_Data)
   sim_sample/              # Simulation SDK (cg engine)
+docs/
+  visualize.md             # Visualizer user guide + end-to-end examples
 submit/                    # Built submission tarballs
 ```
