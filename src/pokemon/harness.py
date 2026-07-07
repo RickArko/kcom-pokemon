@@ -16,10 +16,18 @@ def _flatten_obs(obs: dict | None) -> dict:
     ``current_player``, ``done``, etc.).  This helper bridges the two formats so
     existing agents (RandomAgent, RuleBasedAgent) work without modification.
     """
-    if obs is None or obs.get("select") is None:
-        return {"select": None}
-    flat = dict(obs)
-    select = flat["select"]
+    flat = dict(obs) if obs else {}
+    select = flat.get("select")
+    if select is None:
+        flat["select"] = None
+        current = flat.get("current", {})
+        flat["current_player"] = current.get("yourIndex", 0) if current else 0
+        flat["done"] = True
+        flat["options"] = []
+        flat["minCount"] = 0
+        flat["maxCount"] = 0
+        flat["scores"] = [0, 0]
+        return flat
     flat["options"] = list(range(len(select["option"])))
     flat["minCount"] = select["minCount"]
     flat["maxCount"] = select["maxCount"]

@@ -69,3 +69,6 @@ catboost_info/
 workspace/results/*
 submit/*
 scripts/*
+
+# Match data (collected replays)
+data/matches/

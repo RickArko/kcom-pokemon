@@ -151,6 +151,41 @@ You must **join both competitions** (Accept Rules) on Kaggle before `make downlo
 - [Simulation](https://www.kaggle.com/competitions/pokemon-tcg-ai-battle)
 - [Strategy](https://www.kaggle.com/competitions/pokemon-tcg-ai-battle-challenge-strategy)
 
+## Match Data Collection & Analysis
+
+Collect per-frame replay data from local agent matchups and analyse trends.
+> **Note:** Kaggle does not expose individual match replays from the arena
+> — only aggregate TrueSkill scores.  All match data must be collected
+> locally.  Use `make match-download` to fetch the leaderboard (scores
+> only) for reference.
+
+```bash
+# 0. Fetch Kaggle leaderboard for reference (no individual replays)
+make match-download
+
+# 1. Record matches (requires SDK)
+make match-data                               # round-robin all agents
+make match-data ARGS="--pairs exp003 exp002"  # specific matchup
+make match-data ARGS="--pairs exp003 random --n-matches 50"  # vs baseline
+make match-data ARGS="--fast"                 # quick smoke test (3 matches)
+
+# 2. Build aggregated Parquet tables (no SDK needed)
+make match-aggregate
+
+# 3. Or do both in one step
+make match-all ARGS="--n-matches 20"
+
+# 4. Analyse in Jupyter
+uv run jupyter notebook notebooks/match_analysis.ipynb
+```
+
+Outputs to `data/matches/`:
+- `manifest.jsonl` — master index
+- `raw/*.json` — full replay JSONs (one per match)
+- `aggregated/results.parquet` — per-match summaries
+- `aggregated/frames.parquet` — per-decision-point snapshots
+- `aggregated/turn_summary.parquet` — per-turn aggregates
+
 ## Development
 
 ```bash

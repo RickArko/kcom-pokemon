@@ -8,7 +8,9 @@ RAW_DIR        := data/raw
 SUBMISSION_FILE ?= submit/submission.tar.gz
 SUBMISSION_MSG  ?= "agent: rule-based baseline"
 
-.PHONY: all install download sim-download train submit test lint format clean list results
+MATCH_DATA_DIR := data/matches
+
+.PHONY: all install download sim-download train submit test lint format clean list results match-data match-aggregate match-all
 
 all: install download
 	@echo ""
@@ -148,6 +150,26 @@ _ensure_kaggle_auth: _ensure_kaggle_token
 	KAGGLE_API_TOKEN="$$TOKEN" uv run kaggle competitions list >/dev/null 2>&1 && \
 	echo "  Authenticated successfully." || \
 	{ echo "  WARNING: Authentication check failed."; exit 1; }
+
+match-download:
+	@mkdir -p $(MATCH_DATA_DIR)/leaderboard; \
+	$(MAKE) _ensure_kaggle_token; \
+	TOKEN="$$(cat $(TOKEN_FILE) 2>/dev/null)"; \
+	[ -z "$$TOKEN" ] && TOKEN="$$KAGGLE_API_TOKEN"; \
+	echo "Fetching leaderboard from $(SIM_COMPETITION)..."; \
+	KAGGLE_API_TOKEN="$$TOKEN" uv run kaggle competitions leaderboard \
+		-c $(SIM_COMPETITION) --download > $(MATCH_DATA_DIR)/leaderboard/leaderboard.json 2>/dev/null; \
+	echo "Saved to $(MATCH_DATA_DIR)/leaderboard/"
+
+match-data:
+	@mkdir -p $(MATCH_DATA_DIR); \
+	PYTHONPATH=$(SIM_DATA_DIR):$$PYTHONPATH uv run python scripts/collect_match_data.py $(ARGS)
+
+match-aggregate:
+	@uv run python scripts/aggregate_matches.py \
+		--input $(MATCH_DATA_DIR) --output $(MATCH_DATA_DIR)/aggregated $(ARGS)
+
+match-all: match-data match-aggregate
 
 clean:
 	rm -f .uv_sync

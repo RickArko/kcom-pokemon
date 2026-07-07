@@ -20,6 +20,11 @@ All Python **must** be prefixed with `uv run` (`.venv` not on PATH).
 | `make gauntlet` | Run tournament (auto-discovers `workspace/exp*/`) |
 | `make gauntlet ARGS="exp001 exp002"` | Run specific experiments |
 | `make results` | Show last gauntlet results table |
+| `make match-download` | Fetch Kaggle leaderboard scores (no individual replays exposed) |
+| `make match-data` | Record match replays to `data/matches/` (requires SDK) |
+| `make match-data ARGS="--pairs exp003 exp002 --n-matches 50"` | Specific matchup |
+| `make match-aggregate` | Build Parquet analysis tables from replays |
+| `make match-all` | `match-data` + `match-aggregate` in one step |
 | `make build-submit ARGS="--agent ... --deck ..."` | Package `.tar.gz` |
 | `make submit` | Upload to Kaggle + show leaderboard |
 
