@@ -171,6 +171,53 @@ match-aggregate:
 
 match-all: match-data match-aggregate
 
+# ── Kaggle Episode Dataset Pipeline ────────────────────────────────────
+
+KAGGLE_REPLAYS_DIR := data/kaggle_replays
+
+kaggle-episodes:
+	@mkdir -p $(KAGGLE_REPLAYS_DIR); \
+	$(MAKE) _ensure_kaggle_token; \
+	uv run python scripts/download_kaggle_episodes.py $(ARGS)
+
+kaggle-episodes-latest:
+	@mkdir -p $(KAGGLE_REPLAYS_DIR); \
+	$(MAKE) _ensure_kaggle_token; \
+	uv run python scripts/download_kaggle_episodes.py --latest
+
+kaggle-convert:
+	@uv run python scripts/convert_kaggle_replays.py $(ARGS)
+
+kaggle-aggregate: kaggle-convert match-aggregate
+	@echo ""
+	@echo "✓ Kaggle episodes converted and aggregated."
+
+kaggle-all: kaggle-episodes kaggle-convert match-aggregate
+	@echo ""
+	@echo "✓ Full Kaggle pipeline complete: downloaded → converted → aggregated."
+
+kaggle-clean:
+	@rm -rf $(KAGGLE_REPLAYS_DIR)/episodes/*/; \
+	rm -f $(KAGGLE_REPLAYS_DIR)/manifest.jsonl; \
+	echo "Cleaned all downloaded episode data."
+
+kaggle-list-dates:
+	@uv run python scripts/download_kaggle_episodes.py --list-dates
+
+# ── Meta Analysis ─────────────────────────────────────────────────────
+
+meta-report:
+	@uv run python scripts/meta_analysis.py $(ARGS)
+
+meta: kaggle-all meta-report
+	@echo "Meta analysis complete."
+
+counter-strategy:
+	@uv run python scripts/generate_counter_strategy.py $(ARGS)
+
+meta-full: kaggle-all meta-report counter-strategy
+	@echo "Full meta pipeline complete."
+
 clean:
 	rm -f .uv_sync
 	rm -rf submit/ workspace/results/
