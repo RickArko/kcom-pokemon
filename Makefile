@@ -10,7 +10,7 @@ SUBMISSION_MSG  ?= "agent: rule-based baseline"
 
 MATCH_DATA_DIR := data/matches
 
-.PHONY: all install download sim-download train submit test lint format clean list results match-data match-aggregate match-all
+.PHONY: all install download sim-download train submit test lint format clean list results match-data match-aggregate match-all meta-decks deck-gap verify-deck
 
 all: install download
 	@echo ""
@@ -217,6 +217,20 @@ counter-strategy:
 
 meta-full: kaggle-all meta-report counter-strategy
 	@echo "Full meta pipeline complete."
+
+# ── Deck Optimization & Verification ───────────────────────────────────
+
+META_DECKS_DIR := data/meta_decks
+
+meta-decks:
+	@mkdir -p $(META_DECKS_DIR); \
+	PYTHONPATH=$(SIM_DATA_DIR):$$PYTHONPATH uv run python scripts/meta_deck_extract.py $(ARGS)
+
+deck-gap:
+	@PYTHONPATH=$(SIM_DATA_DIR):$$PYTHONPATH uv run python scripts/deck_gap.py $(ARGS)
+
+verify-deck:
+	@PYTHONPATH=$(SIM_DATA_DIR):$$PYTHONPATH uv run python scripts/verify_deck.py $(ARGS)
 
 clean:
 	rm -f .uv_sync

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import logging
 import shutil
+import sys
 import tarfile
 from pathlib import Path
 
@@ -22,6 +23,37 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _REQUIRED_FILES = ["main.py", "deck.csv"]
+
+
+def _load_deck(path: Path) -> list[int]:
+    return [int(line) for line in path.read_text().split("\n") if line.strip()][:60]
+
+
+def _validate_deck_or_exit(deck_path: Path, cg_dir: Path) -> list[int]:
+    """Load and validate the deck against the engine's deck-building rules.
+
+    Aborts the build (exit 1) on any violation so we never upload a deck the
+    Kaggle engine will reject at ``battle_start`` (e.g. >1 ACE SPEC, >4 copies
+    by name, or !=60 cards).  Prefers the engine card data (which encodes the
+    ACE SPEC flag correctly) and falls back to the CSV source (which does not,
+    so ACE SPEC violations may be missed offline).
+    """
+    deck = _load_deck(deck_path)
+    # Make the bundled cg engine importable so ACE SPEC flags resolve correctly.
+    if cg_dir.exists():
+        sys.path.insert(0, str(cg_dir.parent if cg_dir.name == "cg" else cg_dir))
+    from pokemon.card_db import CardDB, validate_deck
+
+    db = CardDB.load(use_engine=True)
+    ok, errors = validate_deck(deck, db)
+    if not ok:
+        logger.error("Deck validation FAILED for %s:", deck_path)
+        for e in errors:
+            logger.error("  - %s", e)
+        logger.error("Fix the deck before submitting — the Kaggle engine will reject it.")
+        raise SystemExit(1)
+    logger.info("Deck validated: 60 cards, <=4 copies by name, <=1 ACE SPEC.")
+    return deck
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,6 +108,9 @@ def main() -> None:
         if not path.exists():
             logger.error("%s not found at %s", name, path)
             raise SystemExit(1)
+
+    # Validate the deck *before* packaging so invalid decks never get uploaded.
+    _validate_deck_or_exit(deck_path, cg_dir)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     bundle_dir = out_dir / "bundle"

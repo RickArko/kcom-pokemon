@@ -1301,7 +1301,7 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=12.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.19" },
     { name = "seaborn", extras = ["dev"], specifier = ">=0.13.2" },
 ]
 provides-extras = ["dev"]

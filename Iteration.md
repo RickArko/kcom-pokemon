@@ -325,6 +325,81 @@ Ready for Kaggle submission.
 
 ---
 
+### exp009 — Meta-aligned deck optimization + verification workflow (Phase 5)
+
+**Hypothesis (from `.ai/plans/improvements.md`):** The Lucario deck was
+hand-tuned against only the 4 sample archetypes. Aligning it to the **real
+Kaggle meta** card-frequency distribution (measured from 5,333 downloaded
+episodes) should lift win rate, with no agent code changes.
+
+**Two critical findings from the meta data (`scripts/deck_gap.py`):**
+1. **The exp008 "optimized" deck was INVALID** — 3 ACE SPEC cards (Max Rod,
+   Master Ball, Maximum Belt); only 1 is allowed. The Kaggle engine silently
+   rejects it (instant game-over, 0 turns). `build_submission.py` had no
+   validation gate, so this would have uploaded a broken deck. **Fixed:**
+   added `validate_deck` to `build_submission.py` (blocks invalid decks).
+2. **Lucario is a 41.4% WR deck in the real Kaggle meta** (157 observed games,
+   26.9% vs fighting_toolbox). The 4-sample-deck local gauntlet (77.1%) was
+   misleading — the real meta is Alakazam / Grimmsnarl / Cynthia's Garchomp /
+   Dragapult, not the sample decks.
+
+**New agentic workflow built (the core deliverable):**
+- `scripts/meta_deck_extract.py` → `make meta-decks` — extracts canonical
+  valid 60-card decklists per archetype from Kaggle episode parquet data.
+- `src/pokemon/meta_decks.py` — meta proxy agents (heuristic-piloted real meta
+  decks) for local meta gauntlet testing.
+- `scripts/deck_gap.py` → `make deck-gap` — data-driven gap analysis: cards
+  we run but meta doesn't, cards meta runs but we don't, observed archetype WR.
+- `src/pokemon/stats.py` — Wilson 95% CI + regression-gate verdict logic
+  (testable without the engine).
+- `scripts/verify_deck.py` → `make verify-deck` — the verification workflow:
+  head-to-head vs baseline + meta proxies + random, with CI and a pass/fail
+  gate (candidate must beat baseline head-to-head AND not regress vs the meta
+  field). Catches overfitting to the mirror.
+- `build_submission.py` — deck validation gate (60 cards / ≤4 copies / ≤1 ACE
+  SPEC) so invalid decks never upload.
+- `src/pokemon/heuristic_phase.py` — consolidated the exp006 (PrizePhase) +
+  exp007 (2HKO) enhancements into the bundled package so submissions are
+  self-contained (no workspace file-path imports).
+
+**Deck (exp009, iteration 2 — the minimal data-driven change):** kept the
+closable baseline structure (19 energy + Maximum Belt + Mega Signal) and added
+**Poké Pad x4** (the #1 meta staple at 86.8% of decks, previously missing) in
+place of 4 low-frequency cards (Cheren x2, Tarragon, Energy Retrieval).
+Iteration 1 (full meta-copy: 13 energy + Lunatone/Solrock + Hero's Cape)
+stalled — 37.5% timeouts — because the heuristic couldn't close games with so
+little energy. Lesson: deck optimization must respect the pilot's ability to
+close, not just meta frequency.
+
+**Agent:** `FullMCTSAgent` (same as exp008) — refactored to import the enhanced
+heuristic from `pokemon.heuristic_phase` (self-contained for Kaggle). Verified
+by extracting the tarball to a clean dir: 9/10 (90%) vs random, matching the
+gauntlet's 87.2%.
+
+```
+run:    exp009_deck_tuned  vs exp009_baseline (sample-tuned, ACE SPEC fixed)
+n:      20 matches/side, 280 games (GAUNTLET_FAST, max_turns=120)
+wr:     0.751  (151-50-39, 95% CI [68.7%, 80.6%])  — candidate
+wr:     0.631  (137-80-23, 95% CI [56.5%, 69.3%])  — baseline
+h2h:    0.615  (24-15-1)
+verdict: PASS  (+12.0pp overall, h2h > 52% gate, no meta regression)
+matches: 280
+```
+
+Per-opponent vs real Kaggle meta proxies: cynthia_garchomp +11.3% (76.9% vs
+65.6%), dragapult_ex +19.2% (91.4% vs 72.2%), grimmsnarl +10.9% (78.6% vs
+67.6%), meta_lucario mirror +14.2% (55.9% vs 41.7%).
+
+**Takeaway:** exp009 is a verified improvement — +12.0pp over the sample-tuned
+baseline, beating all 4 meta matchups including the top deck (Garchomp).
+Submitted to Kaggle (pending evaluation; previous best exp005 = 487.9 μ). The
+verification workflow makes deck experiments one-command, reproducible, and
+statistically grounded. **Next:** the Lucario archetype is tier-2 (41.4% meta
+WR) — exp010 should pivot to Cynthia's Garchomp ex (55.4% meta WR); the
+meta-deck + verify workflow makes that a one-script experiment.
+
+---
+
 ### exp003 — Deck optimization: counter-meta
 
 **Hypothesis:** If the meta is dominated by a specific deck archetype (e.g., Dragapult ex),
@@ -542,4 +617,41 @@ All 4 phases (Foundation, Informed Search, Meta-Adaptation, Scale & Robustness) 
 ```bash
 make build-submit ARGS="--agent workspace/exp005_lucario_opp_mcts/agent.py --deck workspace/exp005_lucario_opp_mcts/deck.csv"
 make submit SUBMISSION_MSG="exp005: Lucario MCTS + opponent modeling + effect-damage"
+```
+
+
+
+### Kaggle Replay Data
+Attempt to source competition data for training strategy.
+
+```markdown
+# Todos
+[✓] Create scripts/download_kaggle_episodes.py
+[✓] Create scripts/convert_kaggle_replays.py
+[✓] Extend scripts/aggregate_matches.py with Kaggle fields
+[✓] Create scripts/meta_analysis.py
+[✓] Update Makefile with kaggle targets
+[✓] Create notebooks/kaggle_meta_explorer.ipynb
+[✓] Create scripts/generate_counter_strategy.py
+[✓] Verify: lint + test
+All 8 tasks complete. Here's a summary of what was built:
+Delivered
+File	Purpose
+scripts/download_kaggle_episodes.py	Downloads daily episode datasets by date (--date YYYY-MM-DD) or latest auto-detect; --list-dates shows index
+scripts/convert_kaggle_replays.py	Converts Kaggle replay JSON to local ReplayFrame format; extracts both 60-card decks from step 1 actions, frames from steps 2+, winner from rewards
+scripts/aggregate_matches.py (extended)	Added source (kaggle/local) and avg_rating columns to Parquet output
+scripts/meta_analysis.py	Full analysis: archetype frequency, card frequency (top staples), prize race timing, action distribution per archetype, first/second advantage
+scripts/generate_counter_strategy.py	Matchup matrix + counter recommendations against top meta archetypes
+notebooks/kaggle_meta_explorer.ipynb	9-cell interactive notebook: meta composition, card frequency, prize race, game length, action heatmap, first/second advantage, evolution timing, our agent vs top players comparison
+Makefile	8 new targets: kaggle-episodes, kaggle-convert, kaggle-aggregate, kaggle-all, kaggle-clean, kaggle-list-dates, meta-report, meta, counter-strategy, meta-full
+Pipeline verified end-to-end
+1. Download: Fetches index, lists dates, downloads ~20 GiB/day datasets via Kaggle Datasets API
+2. Convert: 1277 test episodes → 1277 local replay files in 54s; both decks extracted from step 1 (verified: P0/P1 60-card lists)
+3. Aggregate: 3077 games → 125,734 frames + 15,471 turn summaries in Parquet
+4. Analyze: Reports archetype WR, card frequency (Lillie's 91.7%, Boss 52.9%), prize timing (Lucario first prize at turn 5 median), first-turn advantage (Lucario +8.9%)
+Usage after this session
+make kaggle-episodes           # download latest daily dataset
+make kaggle-all                # download → convert → aggregate in one step
+make meta                      # full pipeline + meta analysis report
+make counter-strategy          # matchup-based counter recommendations
 ```
